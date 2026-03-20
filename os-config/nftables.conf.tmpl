@@ -1,0 +1,33 @@
+{{- /*
+  ZeroNAT nftables ruleset template.
+  Rendered at first boot by zeronat-agent from IMDS-discovered values.
+
+  Variables:
+    .VpcCIDR    — VPC CIDR block (e.g. 10.0.0.0/16), from EC2 IMDS
+    .PrimaryIF  — Outbound network interface name (e.g. ens5), from /proc/net/route
+    .FQDNFilter — When true, adds an NFQUEUE rule for FQDN egress filtering
+
+  Installed to: /etc/zeronat/nftables.conf.tmpl  (by RPM)
+  Rendered to:  /etc/nftables/zeronat.conf        (by agent at boot)
+*/ -}}
+table ip zeronat_filter {
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+{{- if .FQDNFilter}}
+        # FQDN egress filter — new HTTP/HTTPS connections are queued to the agent
+        # for domain-name classification against the configured allowlist/denylist.
+        # fail-open: if the queue is full or the agent is not listening, packets pass.
+        ip saddr {{.VpcCIDR}} oif "{{.PrimaryIF}}" tcp dport { 80, 443 } queue num 0 bypass
+{{- end}}
+        ct state established,related accept
+        ip saddr {{.VpcCIDR}} oif "{{.PrimaryIF}}" ct state new accept
+        log prefix "NAT_DROP: " group 0
+    }
+}
+
+table ip zeronat_nat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat;
+        ip saddr {{.VpcCIDR}} oif "{{.PrimaryIF}}" masquerade
+    }
+}

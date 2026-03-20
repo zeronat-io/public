@@ -1,0 +1,16 @@
+# ZeroNAT SSH hardening.
+# Installed to /etc/ssh/sshd_config.d/50-zeronat.conf during AMI bake.
+# This file is included by the main sshd_config on AL2023.
+
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+X11Forwarding no
+AllowTcpForwarding no
+GatewayPorts no
+PermitTunnel no
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 120
+ClientAliveCountMax 2
