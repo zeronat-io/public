@@ -76,7 +76,7 @@ variable "active_route_table_ids" {
 # =============================================================================
 
 variable "mode" {
-  description = "Deployment mode. \"single\" for a standalone NAT instance, \"cluster\" for an HA pair with conntrackd sync and automatic failover."
+  description = "Deployment mode. \"single\" for a standalone NAT instance, \"cluster\" for an HA pair with automatic failover."
   type        = string
   default     = "single"
 
@@ -172,17 +172,6 @@ variable "control_port" {
   }
 }
 
-variable "conntrackd_port" {
-  description = "UDP port for conntrackd state sync. Only used in cluster mode. Matches conntrackd/manager.go:30"
-  type        = number
-  default     = 3780
-
-  validation {
-    condition     = var.conntrackd_port >= 1 && var.conntrackd_port <= 65535
-    error_message = "conntrackd_port must be between 1 and 65535."
-  }
-}
-
 # --- Agent configuration ---
 
 variable "metrics_addr" {
@@ -240,6 +229,19 @@ variable "additional_security_group_rules" {
   }
 }
 
+# --- Elastic IP ---
+
+variable "eip_allocation_id" {
+  description = <<-EOT
+    Existing EIP allocation ID for consistent public egress IP. The agent
+    reassociates this EIP during failover so the cluster always egresses
+    from the same public address. When null (default), the module creates
+    a new EIP. When set to "none", no EIP is created or managed.
+  EOT
+  type    = string
+  default = null
+}
+
 # --- Tagging ---
 
 variable "tags" {
@@ -252,12 +254,12 @@ variable "tags" {
 
 variable "cloudwatch_log_group" {
   description = <<-EOT
-    Base name for CloudWatch Log Groups. When set, the module creates log groups
-    for the agent and conntrackd, adds the required IAM permissions to the
-    instance role, and renders a CloudWatch agent config via user-data.
+    Base name for CloudWatch Log Groups. When set, the module creates a log group
+    for the agent, adds the required IAM permissions to the instance role, and
+    renders a CloudWatch agent config via user-data.
     When null (default), no log groups are created, no IAM permissions are
     added, and the pre-installed CloudWatch agent sits dormant. Zero cost.
-    Example: "zeronat" creates /zeronat/agent and /zeronat/conntrackd.
+    Example: "zeronat" creates /zeronat/agent.
   EOT
   type        = string
   default     = null

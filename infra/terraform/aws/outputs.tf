@@ -86,3 +86,18 @@ output "mode" {
   description = "Deployment mode (\"single\" or \"cluster\"). Lets callers branch without re-deriving."
   value       = var.mode
 }
+
+
+# =============================================================================
+# Elastic IP
+# =============================================================================
+
+output "eip_public_ip" {
+  description = "Public IP of the shared EIP. Null when EIP management is disabled (eip_allocation_id = \"none\")."
+  value       = try(aws_eip.nat[0].public_ip, try(aws_eip_association.nat[0].public_ip, null))
+}
+
+output "eip_allocation_id" {
+  description = "Allocation ID of the managed EIP. Null when EIP management is disabled."
+  value       = local.manage_eip ? local.eip_alloc : null
+}

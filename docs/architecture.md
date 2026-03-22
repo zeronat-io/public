@@ -71,13 +71,13 @@ private IP.
                UDP :3780 (unicast)
 ```
 
-Only the active node owns the `0.0.0.0/0` route entries. Both nodes:
+Only the active node owns the `0.0.0.0/0` route entries and the shared Elastic
+IP. Both nodes:
 - Run `nftables` with identical rulesets
-- Run `conntrackd` for continuous state mirroring
 - Run the ZeroNAT agent, which monitors health and manages AWS route entries
 
 The standby node is ready to forward traffic at any moment — it just does not
-have a route pointing at it yet.
+have a route or EIP pointing at it yet.
 
 ---
 
@@ -112,29 +112,31 @@ Each node runs two health checks in parallel:
 
 When the standby decides the active node is unreachable:
 
-1. Standby calls `ec2:ReplaceRoute` for each managed route table, pointing
+1. Standby reassociates the shared Elastic IP to its own ENI.
+2. Standby calls `ec2:ReplaceRoute` for each managed route table, pointing
    `0.0.0.0/0` at its own ENI.
-2. Standby transitions its local role to ACTIVE.
-3. Traffic from private subnets now arrives at the new active node.
-4. Because conntrack state was continuously mirrored, the new active node
-   already knows about every existing connection. Packets are forwarded
-   without requiring a new TCP handshake.
+3. Standby transitions its local role to ACTIVE.
+4. Traffic from private subnets now arrives at the new active node.
+5. The public IP stays the same (shared EIP), so external allowlists and
+   return traffic continue working. TCP clients reconnect via retransmission.
 
 Total route update time: under one second in practice, limited primarily by
 the `ec2:ReplaceRoute` API call latency (~100–300 ms).
 
 ---
 
-## conntrack state mirroring
+## Shared Elastic IP
 
-`conntrackd` runs on both nodes and synchronises the kernel's conntrack table
-over UDP unicast on port 3780. AWS VPC does not support multicast, so unicast
-is used exclusively.
+The Terraform module allocates a single Elastic IP shared between both nodes.
+During normal operation, the EIP is associated with the active node's ENI.
 
-Every new connection entry on the active node is replicated to the standby
-within milliseconds. On failover, the standby's conntrack table is already
-populated, so `nftables` can apply the correct MASQUERADE translation to
-packets that arrive mid-connection.
+On failover, the new active node calls `ec2:AssociateAddress` to claim the EIP
+before updating the route tables. Because the public IP does not change,
+external services that allowlist by IP continue working without reconfiguration.
+
+The kernel's `nf_conntrack_tcp_loose=1` sysctl allows MASQUERADE to pick up
+mid-stream TCP connections from client retransmits, so most existing
+connections recover automatically without a new handshake.
 
 ---
 

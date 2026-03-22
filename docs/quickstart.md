@@ -76,7 +76,7 @@ terraform apply
 Terraform creates:
 - Two EC2 instances (ARM64 `t4g.micro` by default)
 - An IAM role and instance profile with least-privilege permissions
-- A security group allowing the nodes to talk to each other (heartbeat, conntrack sync)
+- A security group allowing the nodes to talk to each other (heartbeat)
 - EC2 tags that the agent uses for peer discovery
 
 ---

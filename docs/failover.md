@@ -16,9 +16,8 @@ The active node:
 - Forwards and masquerades all outbound traffic from private subnets
 
 The standby node:
-- Mirrors the active node's conntrack table continuously via `conntrackd`
 - Monitors the active node's health via TCP heartbeat
-- Is ready to take over at any moment
+- Is ready to claim the shared EIP and route tables at any moment
 
 ---
 
@@ -42,12 +41,11 @@ The standby then takes over within one heartbeat interval.
 ## Failover sequence
 
 1. Standby detects the active node is unreachable (timeout or notification)
-2. Standby calls `ec2:ReplaceRoute` for each managed route table, pointing
+2. Standby reassociates the shared Elastic IP to its own ENI
+3. Standby calls `ec2:ReplaceRoute` for each managed route table, pointing
    `0.0.0.0/0` at its own ENI
-3. Standby transitions its local role to ACTIVE
-4. Traffic from private subnets begins arriving at the new active node
-5. Existing connections continue without reset — conntrack state was already
-   present on the standby
+4. Standby transitions its local role to ACTIVE
+5. Traffic from private subnets begins arriving at the new active node
 
 **Total time**: typically under one second. The dominant factor is the
 `ec2:ReplaceRoute` API call latency, usually 100–300 ms. The route table update
@@ -57,18 +55,16 @@ propagates to the VPC data plane in under 100 ms after the API call returns.
 
 ## What happens to existing connections
 
-Because `conntrackd` continuously mirrors all connection state from the active
-to the standby, the standby's conntrack table is already populated when it takes
-over. Packets from private subnets that arrive mid-connection are handled
-correctly — the kernel knows the correct source-NAT mapping and applies it.
+Because the shared Elastic IP moves to the new active node, the public IP
+address seen by external services does not change. The new node's kernel
+creates fresh conntrack entries from client retransmits (enabled by
+`nf_conntrack_tcp_loose=1`), and MASQUERADE applies the correct source-NAT
+mapping using the same EIP.
 
-**Practical result**: TCP connections that were established before the failover
-continue without needing to reconnect. Long-lived connections (database sessions,
-file transfers, SSH tunnels through the NAT) survive.
-
-**Edge case**: connections established within the microseconds between the last
-conntrack sync and the route table switch may not have been replicated yet.
-These will need to reconnect. In practice this window is extremely small.
+**Practical result**: most TCP connections recover automatically within a few
+seconds as clients retransmit. Short-lived connections may need to reconnect.
+Long-lived connections (database sessions, file transfers) typically survive
+because TCP retransmission re-establishes the flow through the new node.
 
 ---
 
@@ -80,7 +76,7 @@ When a node boots:
 2. If the peer is unreachable or does not yet exist, the booting node takes
    `ACTIVE` immediately and claims the routes.
 3. If the peer is already `ACTIVE` and reachable, the booting node joins as
-   `STANDBY` and begins mirroring conntrack state.
+   `STANDBY`.
 
 This means replacing a failed node is self-healing: start a new instance with
 the same AMI and tags, and it will join as standby automatically.

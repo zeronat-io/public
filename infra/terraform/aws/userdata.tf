@@ -49,6 +49,10 @@ locals {
     # Agent default web addr is "127.0.0.1:8080" (localhost only).
     # Set to override, e.g. "0.0.0.0:8080" to allow access from the VPC.
     var.web_addr != null ? { ZERONAT_WEB_ADDR = var.web_addr } : {},
+
+    # EIP allocation ID for consistent egress IP during failover.
+    # Only included when the module manages an EIP (eip_allocation_id != "none").
+    local.manage_eip ? { ZERONAT_EIP_ALLOCATION_ID = local.eip_alloc } : {},
   )
 
   # Merge HA + shared vars into the base user-data map (shared by both instances)
@@ -57,7 +61,7 @@ locals {
   # Instance A user-data: includes ZERONAT_TAKEOVER_ON_BOOT=true so the agent
   # creates/replaces 0.0.0.0/0 routes once fully initialized. This ensures
   # zero-downtime deployments — traffic is only routed to the instance after
-  # iptables, conntrackd, and health checks are ready.
+  # nftables and health checks are ready.
   userdata_a_vars = merge(local.userdata_vars, { ZERONAT_TAKEOVER_ON_BOOT = "true" })
 
   # Instance B user-data: NO TAKEOVER_ON_BOOT. During initial cluster deploy,

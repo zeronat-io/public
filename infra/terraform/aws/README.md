@@ -3,7 +3,7 @@
 Deploys a ZeroNAT NAT appliance on AWS. Supports two modes:
 
 - **single** — one NAT instance, no failover
-- **cluster** — two instances across AZs with conntrack state sync and sub-second failover
+- **cluster** — two instances across AZs with sub-second failover
 
 The module creates EC2 instances, a security group, IAM role and instance profile, and tags the route tables so the agent can discover and manage them. Routes are set by the agent at boot — not by Terraform — so failover works without any Terraform involvement.
 
@@ -51,7 +51,7 @@ module "zeronat" {
 }
 ```
 
-Two ZeroNAT nodes start up, discover each other via EC2 tags, elect an active node, and set the `0.0.0.0/0` routes. If the active node fails its health checks, the standby takes over by re-pointing all route tables to its own ENI. Existing TCP connections survive because conntrackd has already mirrored the session table.
+Two ZeroNAT nodes start up, discover each other via EC2 tags, elect an active node, and set the `0.0.0.0/0` routes. If the active node fails its health checks, the standby takes over by re-pointing all route tables to its own ENI and claiming the shared Elastic IP.
 
 ### Single instance
 
@@ -168,7 +168,6 @@ iam_instance_profile_name = aws_iam_instance_profile.existing.name
 | `group_tag_key` | EC2 tag key for peer discovery group membership. | `string` | `"zeronat:group"` |
 | `vpc_cidr` | Allow inbound from this CIDR for metrics, Web UI, and SSH. Omit to restrict to SG members only. | `string` | `null` |
 | `control_port` | TCP port for peer control plane. | `number` | `7946` |
-| `conntrackd_port` | UDP port for conntrackd state sync. | `number` | `3780` |
 | `metrics_addr` | Prometheus metrics endpoint address. | `string` | `":9100"` |
 | `web_addr` | Web UI address. Set to `"0.0.0.0:8080"` to allow VPC access. | `string` | `null` |
 | `heartbeat_interval` | Agent heartbeat interval (e.g. `"2s"`). Cluster mode only. | `string` | `null` |
@@ -176,7 +175,7 @@ iam_instance_profile_name = aws_iam_instance_profile.existing.name
 | `peer_scan_interval` | How often to re-scan for peers (e.g. `"30s"`). Cluster mode only. | `string` | `null` |
 | `additional_security_group_rules` | Extra SG rules to attach to the ZeroNAT security group. | `list(object)` | `[]` |
 | `tags` | Additional tags merged onto all taggable resources. | `map(string)` | `{}` |
-| `cloudwatch_log_group` | Base name for CloudWatch Log Groups (e.g. `"zeronat"`). Creates `/name/agent` and `/name/conntrackd`. Null = no log groups, no cost. | `string` | `null` |
+| `cloudwatch_log_group` | Base name for CloudWatch Log Groups (e.g. `"zeronat"`). Creates `/name/agent`. Null = no log groups, no cost. | `string` | `null` |
 | `cloudwatch_log_retention_days` | Retention days for CloudWatch Log Groups. Only used when `cloudwatch_log_group` is set. | `number` | `30` |
 
 ---

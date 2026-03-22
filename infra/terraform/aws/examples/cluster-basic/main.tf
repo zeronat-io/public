@@ -10,8 +10,8 @@
 #   │  AZ-a                                    AZ-b                        │
 #   │  ┌──────────────────────┐                ┌──────────────────────┐    │
 #   │  │ Public 10.0.1.0/24   │                │ Public 10.0.2.0/24   │    │
-#   │  │                      │  conntrackd    │                      │    │
-#   │  │  ┌────────────────┐  │  UDP sync      │  ┌────────────────┐  │    │
+#   │  │                      │  heartbeat     │                      │    │
+#   │  │  ┌────────────────┐  │  TCP sync      │  ┌────────────────┐  │    │
 #   │  │  │ ZeroNAT-a      │◄─┼────────────────┼─►│ ZeroNAT-b      │  │    │
 #   │  │  │ (active)       │  │                │  │ (standby)      │  │    │
 #   │  │  └──────┬─────────┘  │                │  └──────┬─────────┘  │    │
@@ -31,10 +31,10 @@
 #                                │ IGW │
 #                                └─────┘
 #
-# - One HA cluster: two ZeroNAT nodes across AZs with conntrackd state sync.
+# - One HA cluster: two ZeroNAT nodes across AZs with peer heartbeat.
 # - Node A creates the 0.0.0.0/0 routes at boot (TAKEOVER_ON_BOOT).
 # - On failover, the agent re-points all routes to the surviving node's ENI.
-# - Sub-second failover without dropping long-lived connections.
+# - Sub-second failover; long-lived connections reconnect automatically.
 # =============================================================================
 
 terraform {
@@ -309,6 +309,14 @@ output "nat_instance_a_private_ip" {
 
 output "nat_instance_b_private_ip" {
   value = module.nat.instance_b_private_ip
+}
+
+output "nat_eip_public_ip" {
+  value = module.nat.eip_public_ip
+}
+
+output "nat_eip_allocation_id" {
+  value = module.nat.eip_allocation_id
 }
 
 output "test_a_private_ip" {

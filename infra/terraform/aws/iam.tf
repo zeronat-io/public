@@ -116,6 +116,19 @@ resource "aws_iam_role_policy" "zeronat" {
         }
       ],
 
+      # --- EIP failover (optional: only when EIP is managed) ---
+      # AssociateAddress: agent moves the shared EIP to itself during failover
+      # DisassociateAddress: cleanup if needed
+      # DescribeAddresses: agent checks current EIP association
+      local.manage_eip ? [
+        {
+          Sid      = "EIPFailover"
+          Effect   = "Allow"
+          Action   = ["ec2:AssociateAddress", "ec2:DisassociateAddress", "ec2:DescribeAddresses"]
+          Resource = "*"
+        }
+      ] : [],
+
       # --- CloudWatch metrics (CPU credit monitoring on T-series) ---
       # See agent/metrics/cloud/aws.go — calls GetMetricData
       [

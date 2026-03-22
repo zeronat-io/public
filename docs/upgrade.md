@@ -80,11 +80,10 @@ Wait until you see:
 ```
 Peer discovered  peer_ip=10.0.1.x
 Transitioning to STANDBY  reason=peer_is_active
-conntrackd sync: bulk transfer complete
 ```
 
-The new standby is now running the updated version and has a full copy of the
-active node's conntrack state.
+The new standby is now running the updated version and is ready to take over
+if the active node becomes unavailable.
 
 ---
 
@@ -148,5 +147,5 @@ If the new AMI exhibits problems, repeat the procedure using the previous AMI
 ID. The process is identical — replace the standby first, fail over, replace
 the other node.
 
-Because conntrack state is mirrored continuously, rolling back to the previous
-version also does not drop connections.
+The rollback process is identical to the upgrade — replace one node at a time
+and the shared EIP ensures a stable public IP throughout.

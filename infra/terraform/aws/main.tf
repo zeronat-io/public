@@ -49,7 +49,6 @@ locals {
 #   Egress all            | -1    | all              | 0.0.0.0/0 | Always
 #   NAT traffic           | -1    | all              | vpc_cidr  | vpc_cidr != null
 #   Peer control          | TCP   | var.control_port | Self      | mode == "cluster"
-#   Conntrackd sync       | UDP   | var.conntrackd_port | Self   | mode == "cluster"
 #   Prometheus metrics    | TCP   | metrics_port     | vpc_cidr  | vpc_cidr != null
 #   Web UI                | TCP   | web_port         | vpc_cidr  | vpc_cidr != null
 #   SSH                   | TCP   | 22               | vpc_cidr  | vpc_cidr != null && key_name != null
@@ -108,21 +107,6 @@ resource "aws_security_group_rule" "peer_control" {
   to_port                  = var.control_port
   source_security_group_id = aws_security_group.zeronat.id # Self-referencing: only peers in this SG
   description              = "Peer control plane (TCP ${var.control_port})"
-}
-
-# --- Cluster-only: conntrackd state sync (UDP) ---
-# Conntrackd replicates connection tracking state between peers.
-# Matches conntrackd/manager.go:30
-resource "aws_security_group_rule" "conntrackd_sync" {
-  count = local.is_cluster ? 1 : 0 # Only in cluster mode — no conntrackd in single mode
-
-  security_group_id        = aws_security_group.zeronat.id
-  type                     = "ingress"
-  protocol                 = "udp"
-  from_port                = var.conntrackd_port
-  to_port                  = var.conntrackd_port
-  source_security_group_id = aws_security_group.zeronat.id # Self-referencing: only peers in this SG
-  description              = "Conntrackd state sync (UDP ${var.conntrackd_port})"
 }
 
 # --- Conditional: Prometheus metrics (TCP) ---
@@ -266,7 +250,10 @@ resource "aws_ec2_tag" "route_table" {
 # When set, only the specified subset gets the active tag — enabling gradual
 # migration from AWS NAT Gateway one subnet at a time.
 resource "aws_ec2_tag" "rt_active" {
-  for_each = toset(coalesce(var.active_route_table_ids, var.route_table_ids))
+  for_each = {
+    for i, id in coalesce(var.active_route_table_ids, var.route_table_ids) :
+    tostring(i) => id
+  }
 
   resource_id = each.value
   key         = "${var.group_tag_key}:active"
@@ -274,12 +261,44 @@ resource "aws_ec2_tag" "rt_active" {
 }
 
 # =============================================================================
+# Elastic IP (shared public egress address)
+# =============================================================================
+#
+# When eip_allocation_id is null, the module creates a new EIP.
+# When eip_allocation_id is a real allocation ID, the module uses it.
+# When eip_allocation_id is "none", no EIP resources are created.
+#
+# The EIP is initially associated with instance A. During failover the
+# agent calls AssociateAddress to move it to the surviving node.
+# =============================================================================
+
+locals {
+  manage_eip = var.eip_allocation_id != "none"
+  eip_alloc  = local.manage_eip ? coalesce(var.eip_allocation_id, try(aws_eip.nat[0].id, null)) : null
+}
+
+resource "aws_eip" "nat" {
+  count  = var.eip_allocation_id == null ? 1 : 0
+  domain = "vpc"
+
+  tags = merge({ Name = "${var.name}-nat-eip" }, var.tags)
+}
+
+resource "aws_eip_association" "nat" {
+  count         = local.manage_eip ? 1 : 0
+  allocation_id = local.eip_alloc
+
+  network_interface_id = aws_instance.a.primary_network_interface_id
+}
+
+
+# =============================================================================
 # Routes — managed by the agent, NOT by Terraform
 # =============================================================================
 #
 # The 0.0.0.0/0 route is NOT created here. Instead, instance A boots with
 # ZERONAT_TAKEOVER_ON_BOOT=true in its user-data. The agent creates or replaces
-# the default route only after all services (iptables, conntrackd, health
+# the default route only after all services (nftables, health
 # checks) are fully initialized — ensuring zero-downtime deployments.
 #
 # Only instance A gets TAKEOVER_ON_BOOT=true to avoid a race condition when

@@ -65,39 +65,33 @@ and peer discovery re-syncs may not work after recovery.
 nc -z -v <active-node-private-ip> 7946
 ```
 
-**Check conntrackd port:**
+**Check EIP association:**
 
-If conntrackd sync is not working (UDP 3780 by default), failover still works
-but surviving connections may not be seamless. Check:
-
-```bash
-# Test UDP reachability (requires nc -u or netcat)
-nc -u -z -v <peer-private-ip> 3780
-```
+If the EIP is not moving during failover, verify the agent has the required
+`ec2:AssociateAddress` and `ec2:DisassociateAddress` IAM permissions.
 
 The security group created by the Terraform module allows both ports between
 the two nodes automatically.
 
 ---
 
-## conntrack sync not working
+## EIP failover not working
 
-**Symptom:** Failover happens but existing connections drop. Or
-`/var/log/conntrackd.log` shows errors or no sync activity.
+**Symptom:** Failover triggers but the public IP does not move to the new active
+node, or external services see a different IP after failover.
 
-**Check conntrackd status:**
+**Check EIP association:**
 
 ```bash
-systemctl status conntrackd
-journalctl -u conntrackd -n 50
-tail -f /var/log/conntrackd.log
+aws ec2 describe-addresses --filters "Name=instance-id,Values=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)"
 ```
 
 Common causes:
-- UDP port 3780 blocked by security group (check both ingress and egress rules)
-- conntrackd started before the peer IP was known (it re-reads config at
-  startup; the agent reconfigures and restarts it automatically)
-- `nf_conntrack_acct` not enabled (affects byte counters but not sync itself)
+- Missing IAM permission `ec2:AssociateAddress` on the instance profile
+- The EIP was not created by the Terraform module (check that the module is in
+  `cluster` mode)
+- Rate limiting on `ec2:AssociateAddress` API calls (rare, but possible during
+  rapid failover cycling)
 
 **Check that conntrack accounting is enabled (for byte metrics):**
 
@@ -272,9 +266,6 @@ journalctl -u zeronat-agent --since "1 hour ago" > agent.log
 
 # nftables ruleset
 nft list ruleset > nftables.txt
-
-# conntrackd log
-tail -n 100 /var/log/conntrackd.log > conntrackd.log
 
 # Route tables (replace with your route table IDs)
 aws ec2 describe-route-tables --route-table-ids rtb-... > route-tables.json

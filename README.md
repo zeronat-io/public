@@ -1,8 +1,8 @@
 # ZeroNAT
 
-A highly available NAT appliance for AWS VPC. Two ARM64 nodes across availability zones,
-with continuous conntrack state mirroring. Sub-second failover that does not drop
-long-lived connections.
+A highly available NAT appliance for AWS VPC. Two ARM64 nodes across availability zones
+with a shared Elastic IP. Sub-second failover via EIP reassociation and route table
+re-pointing.
 
 ---
 
@@ -31,8 +31,8 @@ Private subnets
  ┌────────────────────────────────────┐
  │  Active node (AZ-a)                │
  │  nftables MASQUERADE               │
- │  conntrackd (state mirroring) ──── │──── Standby node (AZ-b)
- │  Agent (health + route control)    │     (mirrors all conn state)
+ │  Shared EIP ◄──────────────────── │──── Standby node (AZ-b)
+ │  Agent (health + route control)    │     (ready to claim EIP + routes)
  └────────────────────────────────────┘
       │
       ▼
@@ -40,10 +40,10 @@ Private subnets
 ```
 
 Both nodes run continuously. The active node owns the `0.0.0.0/0` route entry
-pointing at its ENI. The standby mirrors all conntrack state in real time.
-When the active node becomes unreachable, the standby calls `ec2:ReplaceRoute`,
-takes ownership of the route, and traffic continues flowing — through the same
-connections, because the conntrack tables are already populated.
+pointing at its ENI and holds the shared Elastic IP.
+When the active node becomes unreachable, the standby reassociates the EIP to
+itself and calls `ec2:ReplaceRoute` to re-point all managed route tables to its
+own ENI. Traffic continues flowing within sub-second failover time.
 
 The agent binary is distributed via the [AWS Marketplace AMI](#marketplace).
 The Terraform modules, OS configuration, and nftables ruleset in this repository
@@ -112,7 +112,7 @@ Subscribe at: https://aws.amazon.com/marketplace/pp/prodview-zeronat
 The AMI includes:
 - Pre-hardened Amazon Linux 2023 (ARM64)
 - ZeroNAT agent binary (signed, SLSA provenance)
-- `conntrackd`, `nftables`, `amazon-cloudwatch-agent` pre-installed
+- `nftables`, `amazon-cloudwatch-agent` pre-installed
 - CIS Level 1 hardening applied
 - AWS Inspector scan report attached to the listing
 

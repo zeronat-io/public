@@ -52,7 +52,7 @@ route_table_ids = [
 
 ### `mode`
 `"single"` for a standalone NAT instance; `"cluster"` for an HA pair with
-conntrack sync and automatic failover.
+shared EIP and automatic failover.
 
 Default: `"single"`
 
@@ -126,7 +126,6 @@ Default: `null` (all route tables are active)
 | `group_tag_key` | `"zeronat:group"` | EC2 tag key used for peer discovery. Only relevant in cluster mode. Both nodes must share a tag with this key and the same value (`name`). |
 | `vpc_cidr` | `null` | If set, the security group allows inbound access from this CIDR for metrics (`:9100`), web UI (`:8080`), and SSH (`:22`). Omit to restrict to security group members only. |
 | `control_port` | `7946` | TCP port for the peer control plane (heartbeat). Only used in cluster mode. |
-| `conntrackd_port` | `3780` | UDP port for conntrackd state sync. Only used in cluster mode. |
 
 ### Agent behaviour
 
@@ -142,7 +141,7 @@ Default: `null` (all route tables are active)
 
 | Variable | Default | Description |
 |---|---|---|
-| `cloudwatch_log_group` | `null` | Base name for CloudWatch Log Groups. When set, the module creates log groups for the agent and conntrackd, adds the required IAM permissions, and configures the pre-installed CloudWatch agent. Example: `"zeronat"` creates `/zeronat/agent` and `/zeronat/conntrackd`. |
+| `cloudwatch_log_group` | `null` | Base name for CloudWatch Log Groups. When set, the module creates a log group for the agent, adds the required IAM permissions, and configures the pre-installed CloudWatch agent. Example: `"zeronat"` creates `/zeronat/agent`. |
 | `cloudwatch_log_retention_days` | `30` | Retention period in days for log groups created by this module. Must be a valid CloudWatch retention value. Only used when `cloudwatch_log_group` is set. |
 
 ### Tagging

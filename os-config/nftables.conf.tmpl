@@ -11,6 +11,14 @@
   Rendered to:  /etc/nftables/zeronat.conf        (by agent at boot)
 */ -}}
 table ip zeronat_filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        ct state established,related accept
+        iif "lo" accept
+        icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded } accept
+        tcp dport { 22, 7946, 8080, 9100 } accept
+    }
+
     chain forward {
         type filter hook forward priority filter; policy drop;
 {{- if .FQDNFilter}}

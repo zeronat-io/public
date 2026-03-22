@@ -58,7 +58,7 @@ curl -k -u admin:<password> https://<nat-node-private-ip>:8080
 ### Dashboard (main page)
 
 - **Cluster status**: node role (ACTIVE / STANDBY), peer IP, peer health,
-  heartbeat age, conntrack sync status and sync packets/sec
+  heartbeat age, EIP ownership
 - **Route tables**: each managed route table, whether this node owns the route,
   and the current ENI target
 - **Traffic**: total connections, packets/sec, bytes/sec, per-interface
@@ -77,7 +77,7 @@ new connections. See [fqdn-filtering.md](fqdn-filtering.md).
 
 ### Logs page (`/logs`)
 
-Live-tailed log viewer for the `zeronat-agent` and `conntrackd` services,
+Live-tailed log viewer for the `zeronat-agent` service,
 directly in the browser. Useful for checking events without SSH access.
 
 ---
@@ -117,7 +117,7 @@ are also useful for scripting:
 | `/api/stats` | GET | Current traffic stats and system metrics |
 | `/api/failover/history` | GET | Recent failover events |
 | `/api/fqdn-config` | POST | Update FQDN filter configuration |
-| `/api/logs/recent` | GET | Recent log lines from agent and conntrackd |
+| `/api/logs/recent` | GET | Recent log lines from the agent |
 | `/api/logs/stream` | GET | Server-sent event stream of live log output |
 
 All endpoints require Basic Auth when authentication is enabled.

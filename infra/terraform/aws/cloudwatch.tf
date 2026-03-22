@@ -6,7 +6,7 @@
 # is set. When null (default), nothing here is created and there is no cost.
 #
 # Architecture:
-#   1. Two CloudWatch Log Groups: /<group>/agent and /<group>/conntrackd
+#   1. CloudWatch Log Group: /<group>/agent
 #   2. SSM Parameter Store holds the CloudWatch agent JSON config.
 #   3. SSM State Manager association pushes the config to all ZeroNAT instances
 #      via the pre-baked AmazonCloudWatch-ManageAgent SSM document. The SSM
@@ -34,13 +34,6 @@ resource "aws_cloudwatch_log_group" "agent" {
   tags              = merge({ Name = "${var.name}-agent-logs" }, var.tags)
 }
 
-resource "aws_cloudwatch_log_group" "conntrackd" {
-  count             = local.enable_cw ? 1 : 0
-  name              = "/${var.cloudwatch_log_group}/conntrackd"
-  retention_in_days = var.cloudwatch_log_retention_days
-  tags              = merge({ Name = "${var.name}-conntrackd-logs" }, var.tags)
-}
-
 
 # =============================================================================
 # SSM Parameter — CloudWatch agent configuration
@@ -62,16 +55,6 @@ resource "aws_ssm_parameter" "cw_agent_config" {
     logs = {
       force_flush_interval = 60
       logs_collected = {
-        files = {
-          collect_list = [
-            {
-              file_path         = "/var/log/conntrackd.log"
-              log_group_name    = "/${var.cloudwatch_log_group}/conntrackd"
-              log_stream_name   = "{instance_id}"
-              retention_in_days = var.cloudwatch_log_retention_days
-            }
-          ]
-        }
         journald = {
           collect_list = [
             {
@@ -127,6 +110,5 @@ resource "aws_ssm_association" "cw_agent" {
   depends_on = [
     aws_ssm_parameter.cw_agent_config,
     aws_cloudwatch_log_group.agent,
-    aws_cloudwatch_log_group.conntrackd,
   ]
 }

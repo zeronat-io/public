@@ -1,8 +1,8 @@
 # ZeroNAT Logging Guide
 
-ZeroNAT produces logs from two components: the control plane agent and the
-conntrackd state sync daemon. This guide covers where logs are written, what the
-key events mean, how log rotation works, and how to ship logs off-instance.
+ZeroNAT produces logs from the control plane agent. This guide covers where logs
+are written, what the key events mean, how log rotation works, and how to ship
+logs off-instance.
 
 ---
 
@@ -45,28 +45,7 @@ Key components logged: `healthcheck`, `discovery`, `failover`, `nftables`,
 
 ---
 
-### conntrackd
-
-conntrackd writes directly to `/var/log/conntrackd.log`. This file records
-connection state sync events between the two nodes.
-
-**View live:**
-```bash
-tail -f /var/log/conntrackd.log
-```
-
-**Typical content:** bulk state transfers on startup, incremental sync
-statistics every few seconds, and warnings if sync falls behind.
-
----
-
 ## Log Rotation
-
-Log rotation is configured in the AMI at `/etc/logrotate.d/zeronat-conntrackd`.
-
-- `/var/log/conntrackd.log` rotates daily, keeps 7 days, compresses after 1 day.
-- Rotation fires early if the file exceeds 50M (handles connection storms).
-- Uses `copytruncate` — conntrackd does not need to be restarted after rotation.
 
 The agent's logs (via journald) are capped at 200M total by
 `/etc/systemd/journald.conf.d/zeronat.conf`, retained for up to 30 days.
@@ -110,16 +89,6 @@ instance (or distribute via user-data):
 {
   "logs": {
     "logs_collected": {
-      "files": {
-        "collect_list": [
-          {
-            "file_path": "/var/log/conntrackd.log",
-            "log_group_name": "/zeronat/conntrackd",
-            "log_stream_name": "{instance_id}",
-            "retention_in_days": 30
-          }
-        ]
-      },
       "journald": {
         "collect_list": [
           {
