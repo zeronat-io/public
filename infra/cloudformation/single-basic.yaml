@@ -1,0 +1,391 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ZeroNAT — Single instance NAT appliance. Creates a complete VPC with one
+  ZeroNAT node, two private subnets, and test instances for verification.
+  No HA, no failover. Suitable for dev/test environments.
+
+# =============================================================================
+# Parameters
+# =============================================================================
+
+Parameters:
+  ZeroNATAmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI ID for the ZeroNAT instance (pre-baked with the agent).
+
+  TestAmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI ID for test instances (e.g. Amazon Linux 2023 ARM64).
+
+  InstanceType:
+    Type: String
+    Default: t4g.micro
+    Description: EC2 instance type for the ZeroNAT node.
+    AllowedValues:
+      - t4g.nano
+      - t4g.micro
+      - t4g.small
+      - t4g.medium
+      - t4g.large
+
+  KeyName:
+    Type: String
+    Default: ""
+    Description: >-
+      SSH key pair name. Leave empty to disable SSH access.
+
+
+# =============================================================================
+# Conditions
+# =============================================================================
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
+
+
+# =============================================================================
+# Resources
+# =============================================================================
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # VPC + Internet Gateway
+  # ---------------------------------------------------------------------------
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ---------------------------------------------------------------------------
+  # Subnets
+  # ---------------------------------------------------------------------------
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-a"
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-a"
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.20.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-b"
+
+  # ---------------------------------------------------------------------------
+  # Route Tables
+  # ---------------------------------------------------------------------------
+
+  # Public route table: 0.0.0.0/0 → IGW
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public"
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private route table: 0.0.0.0/0 route is created by the ZeroNAT agent at boot.
+  # Both private subnets share this route table.
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private"
+        - Key: "zeronat:group"
+          Value: !Ref AWS::StackName
+        - Key: "zeronat:group:active"
+          Value: "true"
+
+  PrivateSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ---------------------------------------------------------------------------
+  # Elastic IP
+  # ---------------------------------------------------------------------------
+
+  NATElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat-eip"
+
+  NATEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt NATElasticIP.AllocationId
+      NetworkInterfaceId: !GetAtt ZeroNATInstance.PrimaryNetworkInterfaceId
+
+  # ---------------------------------------------------------------------------
+  # IAM Role + Instance Profile
+  # ---------------------------------------------------------------------------
+
+  ZeroNATRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-zeronat"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-zeronat"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DescribeForDiscovery
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeRouteTables
+                Resource: "*"
+              - Sid: RouteTableMutation
+                Effect: Allow
+                Action:
+                  - ec2:ReplaceRoute
+                  - ec2:CreateRoute
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:route-table/${PrivateRouteTable}"
+              - Sid: EIPFailover
+                Effect: Allow
+                Action:
+                  - ec2:AssociateAddress
+                  - ec2:DisassociateAddress
+                  - ec2:DescribeAddresses
+                Resource: "*"
+              - Sid: CloudWatchMetrics
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-zeronat"
+
+  ZeroNATInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-zeronat"
+      Roles:
+        - !Ref ZeroNATRole
+
+  # ---------------------------------------------------------------------------
+  # ZeroNAT Security Group
+  # ---------------------------------------------------------------------------
+
+  ZeroNATSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ZeroNAT NAT instance security group
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          CidrIp: 10.0.0.0/16
+          Description: NAT traffic from VPC
+        - IpProtocol: tcp
+          FromPort: 9100
+          ToPort: 9100
+          CidrIp: 10.0.0.0/16
+          Description: Prometheus metrics (TCP 9100)
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 10.0.0.0/16
+          Description: Web UI (TCP 8080)
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-zeronat"
+
+  ZeroNATSSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasKeyName
+    Properties:
+      GroupId: !Ref ZeroNATSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: 10.0.0.0/16
+      Description: SSH (TCP 22)
+
+  # ---------------------------------------------------------------------------
+  # ZeroNAT Instance
+  # ---------------------------------------------------------------------------
+
+  ZeroNATInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      ImageId: !Ref ZeroNATAmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnetA
+      SourceDestCheck: false
+      IamInstanceProfile: !Ref ZeroNATInstanceProfile
+      SecurityGroupIds:
+        - !Ref ZeroNATSecurityGroup
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      UserData:
+        Fn::Base64: !Sub |
+          # ZeroNAT agent configuration — single instance
+          ZERONAT_TAKEOVER_ON_BOOT=true
+          ZERONAT_WEB_ADDR=0.0.0.0:8080
+          ZERONAT_EIP_ALLOCATION_ID=${NATElasticIP.AllocationId}
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-a"
+        - Key: "zeronat:group"
+          Value: !Ref AWS::StackName
+
+  # ---------------------------------------------------------------------------
+  # Test Instances
+  # ---------------------------------------------------------------------------
+
+  TestSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Test instances - egress all, SSH from VPC
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-test"
+
+  TestSSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasKeyName
+    Properties:
+      GroupId: !Ref TestSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: 10.0.0.0/16
+      Description: SSH (TCP 22)
+
+  TestInstanceA:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref TestAmiId
+      InstanceType: t4g.nano
+      SubnetId: !Ref PrivateSubnetA
+      SecurityGroupIds:
+        - !Ref TestSecurityGroup
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-test-a"
+
+  TestInstanceB:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref TestAmiId
+      InstanceType: t4g.nano
+      SubnetId: !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref TestSecurityGroup
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-test-b"
+
+
+# =============================================================================
+# Outputs
+# =============================================================================
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+
+  ZeroNATInstanceId:
+    Description: ZeroNAT instance ID
+    Value: !Ref ZeroNATInstance
+
+  ZeroNATPrivateIp:
+    Description: ZeroNAT instance private IP
+    Value: !GetAtt ZeroNATInstance.PrivateIp
+
+  EIPPublicIp:
+    Description: Elastic IP (public egress address)
+    Value: !Ref NATElasticIP
+
+  TestInstanceAPrivateIp:
+    Description: Test instance A private IP
+    Value: !GetAtt TestInstanceA.PrivateIp
+
+  TestInstanceBPrivateIp:
+    Description: Test instance B private IP
+    Value: !GetAtt TestInstanceB.PrivateIp
